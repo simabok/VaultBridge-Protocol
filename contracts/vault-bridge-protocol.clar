@@ -484,3 +484,71 @@
     )
   )
 )
+
+(define-public (transfer-ownership (trade-id uint) (new-client principal) (auth-code (buff 32)))
+  (begin
+    (asserts! (trade-exists trade-id) ERR_BAD_ID)
+    (let
+      (
+        (trade-data (unwrap! (map-get? TradeRegistry { trade-id: trade-id }) ERR_NOT_FOUND))
+        (current-client (get client trade-data))
+        (current-status (get status trade-data))
+      )
+      ;; Only current client or admin can transfer
+      (asserts! (or (is-eq tx-sender current-client) (is-eq tx-sender ADMIN)) ERR_AUTH)
+      ;; New client must be different from current parties
+      (asserts! (not (is-eq new-client current-client)) (err u210))
+      (asserts! (not (is-eq new-client (get vendor trade-data))) (err u211))
+      ;; Only pending or accepted trades can be transferred
+      (asserts! (or (is-eq current-status "pending") (is-eq current-status "accepted")) ERR_PROCESSED)
+      ;; Transfer to new client
+      (map-set TradeRegistry
+        { trade-id: trade-id }
+        (merge trade-data { client: new-client })
+      )
+      (print {event: "ownership_transferred", trade-id: trade-id, 
+              former-client: current-client, new-client: new-client, auth-hash: (hash160 auth-code)})
+      (ok true)
+    )
+  )
+)
+
+(define-public (secure-withdrawal (trade-id uint) (withdraw-amount uint) (approval-sig (buff 65)))
+  (begin
+    (asserts! (trade-exists trade-id) ERR_BAD_ID)
+    (let
+      (
+        (trade-data (unwrap! (map-get? TradeRegistry { trade-id: trade-id }) ERR_NOT_FOUND))
+        (client (get client trade-data))
+        (vendor (get vendor trade-data))
+        (amount (get amount trade-data))
+        (status (get status trade-data))
+      )
+      ;; Only admin can process secure withdrawals
+      (asserts! (is-eq tx-sender ADMIN) ERR_AUTH)
+      ;; Only from disputed trades
+      (asserts! (is-eq status "disputed") (err u220))
+      ;; Cannot withdraw more than available
+      (asserts! (<= withdraw-amount amount) ERR_BAD_VALUE)
+      ;; Minimum lock time (48 blocks, ~8 hours)
+      (asserts! (>= block-height (+ (get creation-time trade-data) u48)) (err u221))
+
+      ;; Simulate signature verification
+      ;; In production: validate both client and vendor approved
+
+      ;; Process withdrawal
+      (unwrap! (as-contract (stx-transfer? withdraw-amount tx-sender client)) ERR_FAILED_TX)
+
+      ;; Update trade record
+      (map-set TradeRegistry
+        { trade-id: trade-id }
+        (merge trade-data { amount: (- amount withdraw-amount) })
+      )
+
+      (print {event: "secure_withdrawal_completed", trade-id: trade-id, client: client, 
+              amount: withdraw-amount, remaining: (- amount withdraw-amount)})
+      (ok true)
+    )
+  )
+)
+
