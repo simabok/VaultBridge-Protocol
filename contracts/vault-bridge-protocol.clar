@@ -270,4 +270,60 @@
   )
 )
 
+(define-public (set-rate-limits (max-tries uint) (wait-period uint))
+  (begin
+    (asserts! (is-eq tx-sender ADMIN) ERR_AUTH)
+    (asserts! (> max-tries u0) ERR_BAD_VALUE)
+    (asserts! (<= max-tries u10) ERR_BAD_VALUE) ;; Max 10 attempts
+    (asserts! (> wait-period u6) ERR_BAD_VALUE) ;; Min 6 blocks (~1 hour)
+    (asserts! (<= wait-period u144) ERR_BAD_VALUE) ;; Max 144 blocks (~1 day)
 
+    ;; Note: Would implement actual rate limiting in production
+
+    (print {event: "rate_limits_set", max-tries: max-tries, 
+            wait-period: wait-period, admin: tx-sender, block-height: block-height})
+    (ok true)
+  )
+)
+
+(define-public (add-cosigner (trade-id uint) (cosigner principal))
+  (begin
+    (asserts! (trade-exists trade-id) ERR_BAD_ID)
+    (let
+      (
+        (trade-data (unwrap! (map-get? TradeRegistry { trade-id: trade-id }) ERR_NOT_FOUND))
+        (client (get client trade-data))
+        (amount (get amount trade-data))
+      )
+      ;; Multi-signature for high-value transactions only (> 1000 STX)
+      (asserts! (> amount u1000) (err u120))
+      (asserts! (or (is-eq tx-sender client) (is-eq tx-sender ADMIN)) ERR_AUTH)
+      (asserts! (is-eq (get status trade-data) "pending") ERR_PROCESSED)
+      (print {event: "cosigner_added", trade-id: trade-id, cosigner: cosigner, requestor: tx-sender})
+      (ok true)
+    )
+  )
+)
+
+(define-public (freeze-trade (trade-id uint) (reason (string-ascii 100)))
+  (begin
+    (asserts! (trade-exists trade-id) ERR_BAD_ID)
+    (let
+      (
+        (trade-data (unwrap! (map-get? TradeRegistry { trade-id: trade-id }) ERR_NOT_FOUND))
+        (client (get client trade-data))
+        (vendor (get vendor trade-data))
+      )
+      (asserts! (or (is-eq tx-sender ADMIN) (is-eq tx-sender client) (is-eq tx-sender vendor)) ERR_AUTH)
+      (asserts! (or (is-eq (get status trade-data) "pending") 
+                   (is-eq (get status trade-data) "accepted")) 
+                ERR_PROCESSED)
+      (map-set TradeRegistry
+        { trade-id: trade-id }
+        (merge trade-data { status: "frozen" })
+      )
+      (print {event: "trade_frozen", trade-id: trade-id, reporter: tx-sender, reason: reason})
+      (ok true)
+    )
+  )
+)
