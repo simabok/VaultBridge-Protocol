@@ -437,3 +437,50 @@
     )
   )
 )
+
+(define-public (create-vault (trade-id uint) (delay-blocks uint) (backup-principal principal))
+  (begin
+    (asserts! (trade-exists trade-id) ERR_BAD_ID)
+    (asserts! (> delay-blocks u72) ERR_BAD_VALUE) ;; Min 72 blocks (~12 hours)
+    (asserts! (<= delay-blocks u1440) ERR_BAD_VALUE) ;; Max 1440 blocks (~10 days)
+    (let
+      (
+        (trade-data (unwrap! (map-get? TradeRegistry { trade-id: trade-id }) ERR_NOT_FOUND))
+        (client (get client trade-data))
+        (unlock-height (+ block-height delay-blocks))
+      )
+      (asserts! (is-eq tx-sender client) ERR_AUTH)
+      (asserts! (is-eq (get status trade-data) "pending") ERR_PROCESSED)
+      (asserts! (not (is-eq backup-principal client)) (err u180)) ;; Different from client
+      (asserts! (not (is-eq backup-principal (get vendor trade-data))) (err u181)) ;; Different from vendor
+      (print {event: "vault_created", trade-id: trade-id, client: client, 
+              backup-principal: backup-principal, unlock-height: unlock-height})
+      (ok unlock-height)
+    )
+  )
+)
+
+(define-public (zk-verify (trade-id uint) (proof (buff 128)) (public-inputs (list 5 (buff 32))))
+  (begin
+    (asserts! (trade-exists trade-id) ERR_BAD_ID)
+    (asserts! (> (len public-inputs) u0) ERR_BAD_VALUE)
+    (let
+      (
+        (trade-data (unwrap! (map-get? TradeRegistry { trade-id: trade-id }) ERR_NOT_FOUND))
+        (client (get client trade-data))
+        (vendor (get vendor trade-data))
+        (amount (get amount trade-data))
+      )
+      ;; Only for high-value trades
+      (asserts! (> amount u10000) (err u190))
+      (asserts! (or (is-eq tx-sender client) (is-eq tx-sender vendor) (is-eq tx-sender ADMIN)) ERR_AUTH)
+      (asserts! (or (is-eq (get status trade-data) "pending") (is-eq (get status trade-data) "accepted")) ERR_PROCESSED)
+
+      ;; Placeholder for actual ZK verification logic
+
+      (print {event: "zk_verification_complete", trade-id: trade-id, verifier: tx-sender, 
+              proof-hash: (hash160 proof), public-inputs: public-inputs})
+      (ok true)
+    )
+  )
+)
