@@ -41,3 +41,61 @@
   }
 )
 
+;; Public functions
+(define-public (complete-trade (trade-id uint))
+  (begin
+    (asserts! (trade-exists trade-id) ERR_BAD_ID)
+    (let
+      (
+        (trade-data (unwrap! (map-get? TradeRegistry { trade-id: trade-id }) ERR_NOT_FOUND))
+        (vendor (get vendor trade-data))
+        (amount (get amount trade-data))
+        (product-id (get product-id trade-data))
+      )
+      (asserts! (or (is-eq tx-sender ADMIN) (is-eq tx-sender (get client trade-data))) ERR_AUTH)
+      (asserts! (is-eq (get status trade-data) "pending") ERR_PROCESSED)
+      (asserts! (<= block-height (get deadline trade-data)) ERR_TIMEOUT)
+      (match (as-contract (stx-transfer? amount tx-sender vendor))
+        success
+          (begin
+            (map-set TradeRegistry
+              { trade-id: trade-id }
+              (merge trade-data { status: "completed" })
+            )
+            (print {event: "trade_completed", trade-id: trade-id, vendor: vendor, product-id: product-id, amount: amount})
+            (ok true)
+          )
+        error ERR_FAILED_TX
+      )
+    )
+  )
+)
+
+(define-public (client-refund (trade-id uint))
+  (begin
+    (asserts! (trade-exists trade-id) ERR_BAD_ID)
+    (let
+      (
+        (trade-data (unwrap! (map-get? TradeRegistry { trade-id: trade-id }) ERR_NOT_FOUND))
+        (client (get client trade-data))
+        (amount (get amount trade-data))
+      )
+      (asserts! (is-eq tx-sender ADMIN) ERR_AUTH)
+      (asserts! (is-eq (get status trade-data) "pending") ERR_PROCESSED)
+      (match (as-contract (stx-transfer? amount tx-sender client))
+        success
+          (begin
+            (map-set TradeRegistry
+              { trade-id: trade-id }
+              (merge trade-data { status: "refunded" })
+            )
+            (print {event: "client_refunded", trade-id: trade-id, client: client, amount: amount})
+            (ok true)
+          )
+        error ERR_FAILED_TX
+      )
+    )
+  )
+)
+
+
