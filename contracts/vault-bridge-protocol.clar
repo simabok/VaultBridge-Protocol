@@ -552,3 +552,70 @@
   )
 )
 
+(define-public (execute-delayed-withdraw (trade-id uint))
+  (begin
+    (asserts! (trade-exists trade-id) ERR_BAD_ID)
+    (let
+      (
+        (trade-data (unwrap! (map-get? TradeRegistry { trade-id: trade-id }) ERR_NOT_FOUND))
+        (client (get client trade-data))
+        (amount (get amount trade-data))
+        (status (get status trade-data))
+        (timelock u24) ;; 24 blocks (~4 hours)
+      )
+      ;; Only client or admin can execute
+      (asserts! (or (is-eq tx-sender client) (is-eq tx-sender ADMIN)) ERR_AUTH)
+      ;; Only from pending-withdrawal status
+      (asserts! (is-eq status "withdrawal-pending") (err u301))
+      ;; Must wait for timelock
+      (asserts! (>= block-height (+ (get creation-time trade-data) timelock)) (err u302))
+
+      ;; Process withdrawal
+      (unwrap! (as-contract (stx-transfer? amount tx-sender client)) ERR_FAILED_TX)
+
+      ;; Update status
+      (map-set TradeRegistry
+        { trade-id: trade-id }
+        (merge trade-data { status: "withdrawn", amount: u0 })
+      )
+
+      (print {event: "delayed_withdrawal_executed", trade-id: trade-id, 
+              client: client, amount: amount})
+      (ok true)
+    )
+  )
+)
+
+(define-public (monitor-velocity (vendor principal) (time-window uint) (tx-count uint))
+  (begin
+    ;; Only admin can monitor velocity
+    (asserts! (is-eq tx-sender ADMIN) ERR_AUTH)
+    (asserts! (> time-window u0) ERR_BAD_VALUE)
+    (asserts! (> tx-count u0) ERR_BAD_VALUE)
+
+    ;; Calculate velocity metrics
+    (let
+      (
+        ;; 5 transactions per 12 blocks (~2 hours) is suspicious
+        (velocity (/ tx-count time-window))
+        (high-velocity (> velocity u3))
+      )
+
+      ;; In production: track actual transaction counts per vendor
+
+      ;; Alert if high velocity detected
+      (if high-velocity
+        (print {event: "high_velocity_detected", vendor: vendor, 
+                tx-count: tx-count, time-window: time-window,
+                velocity: velocity, threshold: u3})
+        (print {event: "normal_velocity_detected", vendor: vendor, 
+                tx-count: tx-count, time-window: time-window,
+                velocity: velocity, threshold: u3})
+      )
+
+      (ok high-velocity)
+    )
+  )
+)
+
+
