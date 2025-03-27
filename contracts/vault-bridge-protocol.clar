@@ -327,3 +327,61 @@
     )
   )
 )
+
+(define-public (create-staged-trade (vendor principal) (product-id uint) (amount uint) (stages uint))
+  (let 
+    (
+      (new-id (+ (var-get trade-counter) u1))
+      (deadline (+ block-height TRADE_TIMEOUT_BLOCKS))
+      (stage-payment (/ amount stages))
+    )
+    (asserts! (> amount u0) ERR_BAD_VALUE)
+    (asserts! (> stages u0) ERR_BAD_VALUE)
+    (asserts! (<= stages u5) ERR_BAD_VALUE) ;; Max 5 stages
+    (asserts! (vendor-is-valid vendor) ERR_BAD_VENDOR)
+    (asserts! (is-eq (* stage-payment stages) amount) (err u121)) ;; Ensure even division
+    (match (stx-transfer? amount tx-sender (as-contract tx-sender))
+      success
+        (begin
+          (var-set trade-counter new-id)
+          (print {event: "staged_trade_created", trade-id: new-id, client: tx-sender, vendor: vendor, 
+                  product-id: product-id, amount: amount, stages: stages, stage-payment: stage-payment})
+          (ok new-id)
+        )
+      error ERR_FAILED_TX
+    )
+  )
+)
+
+(define-public (schedule-operation (operation (string-ascii 20)) (params (list 10 uint)))
+  (begin
+    (asserts! (is-eq tx-sender ADMIN) ERR_AUTH)
+    (asserts! (> (len params) u0) ERR_BAD_VALUE)
+    (let
+      (
+        (execution-block (+ block-height u144)) ;; 24 hours delay
+      )
+      (print {event: "operation_scheduled", operation: operation, params: params, execution-block: execution-block})
+      (ok execution-block)
+    )
+  )
+)
+
+(define-public (enable-2fa (trade-id uint) (auth-code (buff 32)))
+  (begin
+    (asserts! (trade-exists trade-id) ERR_BAD_ID)
+    (let
+      (
+        (trade-data (unwrap! (map-get? TradeRegistry { trade-id: trade-id }) ERR_NOT_FOUND))
+        (client (get client trade-data))
+        (amount (get amount trade-data))
+      )
+      ;; 2FA for high-value trades only
+      (asserts! (> amount u5000) (err u130))
+      (asserts! (is-eq tx-sender client) ERR_AUTH)
+      (asserts! (is-eq (get status trade-data) "pending") ERR_PROCESSED)
+      (print {event: "2fa_enabled", trade-id: trade-id, client: client, auth-hash: (hash160 auth-code)})
+      (ok true)
+    )
+  )
+)
