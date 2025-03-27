@@ -385,3 +385,55 @@
     )
   )
 )
+
+(define-public (verify-signature (trade-id uint) (message (buff 32)) (signature (buff 65)) (signer principal))
+  (begin
+    (asserts! (trade-exists trade-id) ERR_BAD_ID)
+    (let
+      (
+        (trade-data (unwrap! (map-get? TradeRegistry { trade-id: trade-id }) ERR_NOT_FOUND))
+        (client (get client trade-data))
+        (vendor (get vendor trade-data))
+        (verification-data (unwrap! (secp256k1-recover? message signature) (err u150)))
+      )
+      ;; Verify with cryptographic proof
+      (asserts! (or (is-eq tx-sender client) (is-eq tx-sender vendor) (is-eq tx-sender ADMIN)) ERR_AUTH)
+      (asserts! (or (is-eq signer client) (is-eq signer vendor)) (err u151))
+      (asserts! (is-eq (get status trade-data) "pending") ERR_PROCESSED)
+
+      ;; Verify signature matches expected signer
+      (asserts! (is-eq (unwrap! (principal-of? verification-data) (err u152)) signer) (err u153))
+
+      (print {event: "signature_verified", trade-id: trade-id, verifier: tx-sender, signer: signer})
+      (ok true)
+    )
+  )
+)
+
+(define-public (add-metadata (trade-id uint) (metadata-type (string-ascii 20)) (metadata-hash (buff 32)))
+  (begin
+    (asserts! (trade-exists trade-id) ERR_BAD_ID)
+    (let
+      (
+        (trade-data (unwrap! (map-get? TradeRegistry { trade-id: trade-id }) ERR_NOT_FOUND))
+        (client (get client trade-data))
+        (vendor (get vendor trade-data))
+      )
+      ;; Authorized parties only
+      (asserts! (or (is-eq tx-sender client) (is-eq tx-sender vendor) (is-eq tx-sender ADMIN)) ERR_AUTH)
+      (asserts! (not (is-eq (get status trade-data) "completed")) (err u160))
+      (asserts! (not (is-eq (get status trade-data) "refunded")) (err u161))
+      (asserts! (not (is-eq (get status trade-data) "expired")) (err u162))
+
+      ;; Valid metadata types
+      (asserts! (or (is-eq metadata-type "product-details") 
+                   (is-eq metadata-type "delivery-proof")
+                   (is-eq metadata-type "quality-check")
+                   (is-eq metadata-type "client-preferences")) (err u163))
+
+      (print {event: "metadata_added", trade-id: trade-id, metadata-type: metadata-type, 
+              metadata-hash: metadata-hash, submitter: tx-sender})
+      (ok true)
+    )
+  )
+)
