@@ -151,4 +151,54 @@
   )
 )
 
+(define-public (reclaim-expired (trade-id uint))
+  (begin
+    (asserts! (trade-exists trade-id) ERR_BAD_ID)
+    (let
+      (
+        (trade-data (unwrap! (map-get? TradeRegistry { trade-id: trade-id }) ERR_NOT_FOUND))
+        (client (get client trade-data))
+        (amount (get amount trade-data))
+        (deadline (get deadline trade-data))
+      )
+      (asserts! (or (is-eq tx-sender client) (is-eq tx-sender ADMIN)) ERR_AUTH)
+      (asserts! (or (is-eq (get status trade-data) "pending") (is-eq (get status trade-data) "accepted")) ERR_PROCESSED)
+      (asserts! (> block-height deadline) (err u108)) ;; Must be expired
+      (match (as-contract (stx-transfer? amount tx-sender client))
+        success
+          (begin
+            (map-set TradeRegistry
+              { trade-id: trade-id }
+              (merge trade-data { status: "expired" })
+            )
+            (print {event: "expired_trade_reclaimed", trade-id: trade-id, client: client, amount: amount})
+            (ok true)
+          )
+        error ERR_FAILED_TX
+      )
+    )
+  )
+)
+
+(define-public (raise-dispute (trade-id uint) (reason (string-ascii 50)))
+  (begin
+    (asserts! (trade-exists trade-id) ERR_BAD_ID)
+    (let
+      (
+        (trade-data (unwrap! (map-get? TradeRegistry { trade-id: trade-id }) ERR_NOT_FOUND))
+        (client (get client trade-data))
+        (vendor (get vendor trade-data))
+      )
+      (asserts! (or (is-eq tx-sender client) (is-eq tx-sender vendor)) ERR_AUTH)
+      (asserts! (or (is-eq (get status trade-data) "pending") (is-eq (get status trade-data) "accepted")) ERR_PROCESSED)
+      (asserts! (<= block-height (get deadline trade-data)) ERR_TIMEOUT)
+      (map-set TradeRegistry
+        { trade-id: trade-id }
+        (merge trade-data { status: "disputed" })
+      )
+      (print {event: "dispute_raised", trade-id: trade-id, party: tx-sender, reason: reason})
+      (ok true)
+    )
+  )
+)
 
